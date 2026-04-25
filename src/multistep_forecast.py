@@ -1,4 +1,7 @@
 from __future__ import annotations
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import LSTM, Dropout, Dense
+from tensorflow.keras.optimizers import Adam
 
 """Task 2 — Multi-step forecasting strategies (Keras).
 
@@ -115,7 +118,16 @@ def make_windows(series: np.ndarray, window: int, horizon: int = 1) -> Tuple[np.
     -----
     The number of samples is N = T - window - horizon + 1.
     """
-    raise NotImplementedError
+    X = []
+    y = []
+    
+    for i in range(0, len(series) - window - horizon + 1):
+        X.append(series[i : i + window])
+        y.append(series[i + window : i + window + horizon])
+        
+    X = np.array(X).reshape(-1, window, 1)
+    y = np.array(y)
+    return X, y
 
 
 def time_split(
@@ -146,7 +158,26 @@ def time_split(
     ValueError
         If fractions are invalid or produce empty splits.
     """
-    raise NotImplementedError
+    if train_frac <= 0 or val_frac <= 0 or (train_frac + val_frac) >= 1.0:
+        raise ValueError("Invalid fractions")
+    
+    if len(X) == 0 or len(y) == 0:
+        raise ValueError("One of the splits is empty.")
+    
+    train_end = int(len(X) * train_frac)
+    val_end = int(len(X) * val_frac + train_end)
+    
+    
+    X_train = X[:train_end]
+    y_train = y[:train_end]
+    
+    X_val = X[train_end:val_end]
+    y_val = y[train_end:val_end]
+    
+    X_test = X[val_end:]
+    y_test = y[val_end:]
+    
+    return ((X_train, y_train), (X_val, y_val), (X_test, y_test))
 
 
 # ----------------------------
@@ -190,7 +221,15 @@ def build_model(
     - For output_dim>1, use a Dense(output_dim) output layer (vector prediction).
     - Keep loss as MSE, metric MAE.
     """
-    raise NotImplementedError
+    model = Sequential([
+        LSTM(n_units, input_shape=(window, 1)),
+        Dropout(dropout),
+        Dense(dense_units, activation='relu'),
+        Dense(output_dim)
+    ])
+    adam = Adam(learning_rate=learning_rate)
+    model.compile(optimizer=adam, loss='mse', metrics=['mae'])
+    return model
 
 
 def train_model(
@@ -243,7 +282,22 @@ def train_model(
     - Use EarlyStopping (recommended) to reduce overfitting.
     - Do not shuffle time.
     """
-    raise NotImplementedError
+    tf.keras.utils.set_random_seed(seed)
+    X, y = make_windows(series, window, horizon)
+    (X_train, y_train), (X_val, y_val), (X_test, y_test) = time_split(X, y, train_frac, val_frac)
+    model = build_model(window, horizon)
+    
+    
+    history = model.fit(
+        X_train, y_train,
+        validation_data=(X_val, y_val),
+        epochs=epochs,
+        batch_size=batch_size,
+        verbose=verbose,
+        shuffle=False
+    )
+    
+    return (model, X_test, y_test)
 
 
 # ----------------------------
@@ -278,7 +332,23 @@ def recursive_rollout_one_step(
     2) append it to the window
     3) shift window by 1
     """
-    raise NotImplementedError
+    predictions = []
+    current_window = list(init_window.flatten())
+    
+    for _ in range(horizon):
+
+        X_input = np.array(current_window).reshape(1, len(current_window), 1)
+        
+        pred = model.predict(X_input)
+        val = float(pred[0, 0])
+        
+        predictions.append(val)
+    
+        current_window.append(val)
+        current_window.pop(0)
+        
+        
+    return np.array(predictions)
 
 
 def recursive_rollout_k_step_stride_k(
@@ -314,7 +384,23 @@ def recursive_rollout_k_step_stride_k(
 
     This reduces recursion depth (H/K calls).
     """
-    raise NotImplementedError
+    predictions = []
+    current_window = list(init_window.flatten())
+    
+    
+    for _ in range(0, horizon, k):
+
+        X_input = np.array(current_window).reshape(1, len(current_window), 1)
+        
+        pred = model.predict(X_input, verbose=0)
+        block = pred[0].tolist() 
+        
+        predictions.extend(block)
+        
+        current_window.extend(block)
+        current_window = current_window[k:]
+
+    return np.array(predictions[:horizon])
 
 
 def recursive_rollout_k_step_stride_1(
@@ -351,7 +437,23 @@ def recursive_rollout_k_step_stride_1(
 
     This uses the K-step model as a one-step generator.
     """
-    raise NotImplementedError
+    predictions = []
+    current_window = list(init_window.flatten())
+    
+    for _ in range(horizon):
+    
+        X_input = np.array(current_window).reshape(1, len(current_window), 1)
+        
+        pred = model.predict(X_input)
+        block = pred[0].tolist() 
+        
+        val = block[0]
+        predictions.append(val)
+        current_window.append(val)
+        current_window.pop(0)
+        
+        
+    return np.array(predictions)
 
 
 # ----------------------------
